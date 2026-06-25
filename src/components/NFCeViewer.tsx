@@ -720,16 +720,16 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
             className="border-b pb-1 mb-2 transition-colors duration-200"
             style={{ borderColor: borderColor }}
           >
-            <div 
+            <div
               className="grid grid-cols-12 gap-1 text-[9px] font-bold uppercase transition-colors duration-200"
               style={{ color: textColor }}
             >
               <div className="col-span-1">#</div>
-              <div className="col-span-6">Descrição</div>
+              <div className="col-span-5">Descrição</div>
               <div className="col-span-1 text-center">Un</div>
               <div className="col-span-1 text-right">Qtd</div>
-              <div className="col-span-1.5 text-right">Vl Un</div>
-              <div className="col-span-1.5 text-right">Total</div>
+              <div className="col-span-2 text-right">Vl Un</div>
+              <div className="col-span-2 text-right">Total</div>
             </div>
           </div>
 
@@ -815,11 +815,11 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
                 ) : (
                   <div className="grid grid-cols-12 gap-1 font-medium transition-colors duration-200">
                     <div className="col-span-1 text-[9px]" style={{ color: textColor }}>{idx + 1}</div>
-                    <div className="col-span-6 truncate font-medium uppercase text-slate-900" style={{ color: titleColor }}>{item.description}</div>
+                    <div className="col-span-5 truncate font-medium uppercase text-slate-900" style={{ color: titleColor }}>{item.description}</div>
                     <div className="col-span-1 text-center" style={{ color: textColor }}>{item.unit}</div>
                     <div className="col-span-1 text-right fiscal-font" style={{ color: textColor }}>{item.qty.toFixed(layout === "thermal" ? 1 : 2)}</div>
-                    <div className="col-span-1.5 text-right fiscal-font" style={{ color: textColor }}>{item.unitPrice.toFixed(2)}</div>
-                    <div className="col-span-1.5 text-right font-semibold fiscal-font" style={{ color: valueColor }}>{item.totalPrice.toFixed(2)}</div>
+                    <div className="col-span-2 text-right fiscal-font" style={{ color: textColor }}>{item.unitPrice.toFixed(2)}</div>
+                    <div className="col-span-2 text-right font-semibold fiscal-font" style={{ color: valueColor }}>{item.totalPrice.toFixed(2)}</div>
                   </div>
                 )}
                 {!isEditing && item.code && (
