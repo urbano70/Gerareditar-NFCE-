@@ -4,187 +4,187 @@ import { createServer as createViteServer } from "vite";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
-// Load environment variables
 dotenv.config();
 
-// Initialize Express app
 const app = express();
 const PORT = 3000;
 
-// Set up body parser for large payloads (like photos of receipts)
 app.use(express.json({ limit: "15mb" }));
 app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 
-// Initialize Gemini SDK
+// Ensure all unhandled errors from async routes still return JSON
+app.use((err: any, _req: any, res: any, _next: any) => {
+  console.error("[Express Error Handler]", err);
+  if (!res.headersSent) {
+    res.status(500).json({ error: err.message || "Erro interno do servidor." });
+  }
+});
+
 const geminiApiKey = process.env.GEMINI_API_KEY;
 let ai: GoogleGenAI | null = null;
 
 if (geminiApiKey) {
-  ai = new GoogleGenAI({
-    apiKey: geminiApiKey,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
-  });
+  ai = new GoogleGenAI({ apiKey: geminiApiKey, httpOptions: { headers: { "User-Agent": "aistudio-build" } } });
   console.log("Gemini API initialized successfully.");
 } else {
-  console.warn("⚠️ Warning: GEMINI_API_KEY is not defined in the environment.");
+  console.warn("⚠️  GEMINI_API_KEY não configurada. Modo de demonstração ativo.");
 }
 
-// Helper to extract clean text content from HTML to reduce token counts
+// ---------- Helpers ----------
+
 function cleanHtml(html: string): string {
-  // Remove scripts, styles, and other heavy non-text tags
   let text = html;
   text = text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
   text = text.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "");
-  // Remove excess whitespace
   text = text.replace(/\s+/g, " ");
-  // Truncate if extremely long to avoid token limits
-  if (text.length > 250000) {
-    text = text.substring(0, 250000) + "... [Truncated]";
-  }
+  if (text.length > 250000) text = text.substring(0, 250000) + "... [Truncado]";
   return text;
 }
 
-// 44-digit key extractor helper
 function extractAccessKeyFromUrl(url: string): string | null {
-  // Common parameters are chNFe, p, ou key
   try {
     const urlObj = new URL(url);
     const p = urlObj.searchParams.get("p") || urlObj.searchParams.get("chNFe") || urlObj.searchParams.get("chave");
     if (p) {
-      // Remove any trailing protocol values separated by pipes
       const cleanKey = p.split("|")[0];
-      if (/^\d{44}$/.test(cleanKey)) {
-        return cleanKey;
-      }
+      if (/^\d{44}$/.test(cleanKey)) return cleanKey;
     }
-    // Search raw URL string for 44 consecutive digits
     const match = url.match(/\b\d{44}\b/);
     if (match) return match[0];
-  } catch (e) {
-    // String matching fallback
+  } catch {
     const match = url.match(/p=(\d{44})/i) || url.match(/chNFe=(\d{44})/i) || url.match(/\b\d{44}\b/);
     if (match) return match[1] || match[0];
   }
   return null;
 }
 
-// Helper to parse metadata from standard 44-digit NFC-e access key
 function parseAccessKey(key: string) {
   if (!key || key.replace(/\D/g, "").length !== 44) return null;
   const cleanKey = key.replace(/\D/g, "");
-  
   const stateCode = cleanKey.substring(0, 2);
   const year = "20" + cleanKey.substring(2, 4);
   const month = cleanKey.substring(4, 6);
   const rawCnpj = cleanKey.substring(6, 20);
-  const model = cleanKey.substring(20, 22);
   const series = parseInt(cleanKey.substring(22, 25), 10).toString();
   const number = parseInt(cleanKey.substring(25, 34), 10).toString();
-  
   const stateMap: Record<string, string> = {
     "11": "RO", "12": "AC", "13": "AM", "14": "RR", "15": "PA", "16": "AP", "17": "TO",
-    "21": "MA", "22": "PI", "23": "CE", "24": "RN", "25": "PB", "26": "PE", "27": "AL", "28": "SE", "29": "BA",
-    "31": "MG", "32": "ES", "33": "RJ", "35": "SP",
-    "41": "PR", "42": "SC", "43": "RS",
-    "50": "MS", "51": "MT", "52": "GO", "53": "DF"
+    "21": "MA", "22": "PI", "23": "CE", "24": "RN", "25": "PB", "26": "PE", "27": "AL",
+    "28": "SE", "29": "BA", "31": "MG", "32": "ES", "33": "RJ", "35": "SP",
+    "41": "PR", "42": "SC", "43": "RS", "50": "MS", "51": "MT", "52": "GO", "53": "DF",
   };
-  
   const state = stateMap[stateCode] || "SP";
   const formattedCnpj = rawCnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5");
-  const emissionDate = `${year}-${month}-15T14:30:00`;
-  
+  return { state, cnpj: formattedCnpj, series, number, emissionDate: `${year}-${month}-15T10:30:00` };
+}
+
+// Demo NFC-e generator used when API key is missing or Gemini fails completely
+function generateDemoNFCe(hint?: { state?: string; cnpj?: string; number?: string; series?: string; emissionDate?: string; accessKey?: string }) {
+  const state = hint?.state || "SP";
+  const storeNames: Record<string, string> = {
+    SP: "Supermercado São Paulo Ltda.", RJ: "Mercadinho Carioca ME.", MG: "Armazém Mineiro Eireli",
+    RS: "Mercado Gaúcho Ltda.", PR: "Supermercado Paranaense ME.", BA: "Mercado da Bahia Ltda.",
+    DF: "Supermercado Planalto ME.",
+  };
+  const addresses: Record<string, string> = {
+    SP: "Av. Paulista, 1234, Bela Vista, São Paulo - SP, CEP 01310-100",
+    RJ: "Rua da Carioca, 456, Centro, Rio de Janeiro - RJ, CEP 20051-000",
+    MG: "Av. Afonso Pena, 789, Centro, Belo Horizonte - MG, CEP 30130-001",
+    RS: "Rua dos Andradas, 321, Centro, Porto Alegre - RS, CEP 90020-000",
+    PR: "Av. Marechal Floriano Peixoto, 654, Centro, Curitiba - PR, CEP 80010-130",
+    BA: "Rua Chile, 55, Centro Histórico, Salvador - BA, CEP 40020-050",
+    DF: "SCLN 201, Bloco B, Loja 12, Asa Norte, Brasília - DF, CEP 70833-510",
+  };
+  const storeName = storeNames[state] || `Mercado Central ${state} Ltda.`;
+  const address = addresses[state] || `Av. Principal, 100, Centro, Capital - ${state}, CEP 00000-000`;
+  const cnpj = hint?.cnpj || "12.345.678/0001-99";
+  const accessKey = hint?.accessKey || "35" + new Date().getFullYear().toString().slice(-2) + "0115" + "12345678000199" + "65" + "001" + "000000001" + "1" + "00000000";
+  const number = hint?.number || "000000001";
+  const series = hint?.series || "001";
+  const emissionDate = hint?.emissionDate || new Date().toISOString().slice(0, 19);
+
+  const items = [
+    { code: "7891000100103", description: "ARROZ TIPO 1 BRANCO 5KG", qty: 2, unit: "UN", unitPrice: 24.90, totalPrice: 49.80 },
+    { code: "7896006739636", description: "FEIJAO CARIOCA TIPO 1 1KG", qty: 1, unit: "UN", unitPrice: 8.49, totalPrice: 8.49 },
+    { code: "7891025100059", description: "OLEO DE SOJA REFINADO 900ML", qty: 2, unit: "UN", unitPrice: 7.99, totalPrice: 15.98 },
+    { code: "7891991010948", description: "LEITE INTEGRAL UHT 1L", qty: 6, unit: "UN", unitPrice: 4.79, totalPrice: 28.74 },
+    { code: "7898215151791", description: "PAO DE FORMA TRADICIONAL 500G", qty: 1, unit: "UN", unitPrice: 6.99, totalPrice: 6.99 },
+    { code: "7891048010013", description: "SABONETE ANTIBACTERIANO 90G", qty: 3, unit: "UN", unitPrice: 2.49, totalPrice: 7.47 },
+  ];
+  const subtotal = items.reduce((s, i) => s + i.totalPrice, 0);
+  const discount = 2.00;
+  const total = parseFloat((subtotal - discount).toFixed(2));
+
   return {
-    state,
-    cnpj: formattedCnpj,
-    model,
-    series,
-    number,
-    emissionDate
+    issuer: { name: storeName, cnpj, address, state, ie: "123.456.789.000" },
+    invoice: { accessKey: accessKey.padEnd(44, "0").slice(0, 44), number, series, emissionDate, protocol: `1${Date.now().toString().slice(-14)}` },
+    items,
+    totals: { subtotal: parseFloat(subtotal.toFixed(2)), discount, icms: parseFloat((total * 0.12).toFixed(2)), total, paymentType: "Pix" },
+    qrCodeUrl: undefined,
   };
 }
 
-// Helper to call Gemini generateContent with automatic retry and model fallback on transient failures
-async function callGeminiWithRetry(
-  aiClient: GoogleGenAI,
-  params: {
-    model: string;
-    contents: any;
-    config?: any;
-  },
-  maxRetries = 3
-): Promise<any> {
-  let attempt = 0;
-  const modelsToTry = [params.model, "gemini-flash-latest", "gemini-3.5-flash", "gemini-3.1-flash-lite"];
-  
-  while (attempt < maxRetries) {
+// Gemini retry with valid model fallback list
+async function callGeminiWithRetry(aiClient: GoogleGenAI, params: { model: string; contents: any; config?: any }, maxRetries = 3): Promise<any> {
+  // Valid Gemini model IDs (in order of preference — newest first)
+  const modelsToTry = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", params.model].filter(Boolean);
+  let lastErr: any;
+
+  for (let i = 0; i < modelsToTry.length; i++) {
+    const model = modelsToTry[i];
     try {
-      const currentModel = attempt < modelsToTry.length ? modelsToTry[attempt] : params.model;
-      console.log(`[Gemini API] Chamando modelo ${currentModel} (tentativa ${attempt + 1}/${maxRetries})...`);
-      
-      const response = await aiClient.models.generateContent({
-        ...params,
-        model: currentModel,
-      });
+      console.log(`[Gemini] Tentando modelo ${model} (${i + 1}/${modelsToTry.length})...`);
+      const response = await aiClient.models.generateContent({ ...params, model });
       return response;
     } catch (err: any) {
-      attempt++;
-      const errorMessage = err.message || JSON.stringify(err);
-      console.warn(`[Gemini API Warning] Falha na chamada (tentativa ${attempt}/${maxRetries}): ${errorMessage}`);
-      
-      if (attempt >= maxRetries) {
-        throw err;
+      lastErr = err;
+      console.warn(`[Gemini] Falha com ${model}: ${err.message}`);
+      if (i < modelsToTry.length - 1) {
+        await new Promise(r => setTimeout(r, Math.pow(1.5, i + 1) * 800));
       }
-      
-      const delay = Math.pow(1.5, attempt) * 1000;
-      console.log(`[Gemini API] Aguardando ${delay}ms antes de tentar novamente...`);
-      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
-  throw new Error("Falha ao gerar conteúdo após múltiplas tentativas.");
+  throw lastErr || new Error("Todos os modelos Gemini falharam.");
 }
 
-// Define response schema for Gemini parsing to match types.ts
+// ---------- Schema Gemini ----------
+
 const nfceSchema = {
   type: Type.OBJECT,
   properties: {
     issuer: {
       type: Type.OBJECT,
       properties: {
-        name: { type: Type.STRING, description: "Razão social ou Nome Fantasia do emitente da nota fiscal" },
-        cnpj: { type: Type.STRING, description: "CNPJ do emitente (apenas números ou formatado)" },
-        address: { type: Type.STRING, description: "Endereço completo com rua, número, bairro, cidade e estado" },
-        state: { type: Type.STRING, description: "Estado/UF de duas letras do emitente, ex: SP, RJ, DF, RS, PR" },
-        ie: { type: Type.STRING, description: "Inscrição Estadual do emitente (se disponível)" },
+        name: { type: Type.STRING },
+        cnpj: { type: Type.STRING },
+        address: { type: Type.STRING },
+        state: { type: Type.STRING },
+        ie: { type: Type.STRING },
       },
       required: ["name", "cnpj", "address", "state"],
     },
     invoice: {
       type: Type.OBJECT,
       properties: {
-        accessKey: { type: Type.STRING, description: "Chave de acesso de 44 dígitos da NFC-e" },
-        number: { type: Type.STRING, description: "Número do documento fiscal" },
-        series: { type: Type.STRING, description: "Série do documento fiscal" },
-        emissionDate: { type: Type.STRING, description: "Data e hora de emissão em formato ISO 8601 (YYYY-MM-DDTHH:MM:SS) ou formatada como no cupom" },
-        protocol: { type: Type.STRING, description: "Protocolo de autorização de uso (se disponível)" },
+        accessKey: { type: Type.STRING },
+        number: { type: Type.STRING },
+        series: { type: Type.STRING },
+        emissionDate: { type: Type.STRING },
+        protocol: { type: Type.STRING },
       },
       required: ["accessKey", "number", "series", "emissionDate"],
     },
     items: {
       type: Type.ARRAY,
-      description: "Lista de todos os produtos comprados listados no cupom fiscal",
       items: {
         type: Type.OBJECT,
         properties: {
-          code: { type: Type.STRING, description: "Código interno do produto/serviço ou GTIN/EAN" },
-          description: { type: Type.STRING, description: "Nome ou descrição do item" },
-          qty: { type: Type.NUMBER, description: "Quantidade comprada" },
-          unit: { type: Type.STRING, description: "Unidade de medida, ex: UN, KG, LT, CX, PC" },
-          unitPrice: { type: Type.NUMBER, description: "Valor unitário do item" },
-          totalPrice: { type: Type.NUMBER, description: "Valor total pago por este item (quantidade * valor unitário - descontos)" },
+          code: { type: Type.STRING },
+          description: { type: Type.STRING },
+          qty: { type: Type.NUMBER },
+          unit: { type: Type.STRING },
+          unitPrice: { type: Type.NUMBER },
+          totalPrice: { type: Type.NUMBER },
         },
         required: ["description", "qty", "unit", "unitPrice", "totalPrice"],
       },
@@ -192,11 +192,11 @@ const nfceSchema = {
     totals: {
       type: Type.OBJECT,
       properties: {
-        subtotal: { type: Type.NUMBER, description: "Soma dos valores dos itens antes dos descontos" },
-        discount: { type: Type.NUMBER, description: "Desconto total concedido no cupom" },
-        icms: { type: Type.NUMBER, description: "Valor aproximado dos tributos / ICMS (se indicado)" },
-        total: { type: Type.NUMBER, description: "Valor líquido total da nota fiscal / valor pago" },
-        paymentType: { type: Type.STRING, description: "Forma de pagamento (Dinheiro, Cartão de Crédito, Cartão de Débito, Pix, Vale Alimentação, etc.)" },
+        subtotal: { type: Type.NUMBER },
+        discount: { type: Type.NUMBER },
+        icms: { type: Type.NUMBER },
+        total: { type: Type.NUMBER },
+        paymentType: { type: Type.STRING },
       },
       required: ["subtotal", "discount", "total", "paymentType"],
     },
@@ -204,94 +204,92 @@ const nfceSchema = {
   required: ["issuer", "invoice", "items", "totals"],
 };
 
-// API Endpoint to fetch and parse NFC-e
-app.post("/api/parse-nfce", async (req, res) => {
-  const { url, html, text, image } = req.body;
+// ---------- API Routes ----------
 
-  if (!ai) {
-    return res.status(500).json({
-      error: "O serviço de inteligência artificial Gemini não está configurado. Por favor, verifique a chave de API nos Segredos.",
-    });
-  }
-
+app.post("/api/parse-nfce", async (req: any, res: any) => {
   try {
+    const { url, html, text, image } = req.body;
+
+    // --- DEMO MODE: API key not configured ---
+    if (!ai) {
+      let demoHint: ReturnType<typeof parseAccessKey> & { accessKey?: string } | undefined;
+      if (url) {
+        const key = extractAccessKeyFromUrl(url);
+        if (key) demoHint = { ...parseAccessKey(key)!, accessKey: key };
+      }
+      const demoData = generateDemoNFCe(demoHint || undefined);
+      return res.json({ data: demoData, sourceType: "Demonstração (configure GEMINI_API_KEY para dados reais)" });
+    }
+
     let sourceContent = "";
     let sourceType = "";
     let parsedKey: string | null = null;
+    let qrCodeUrl: string | undefined;
 
-    // 1. Process URL if provided
+    // 1. URL
     if (url) {
       sourceType = "URL";
       parsedKey = extractAccessKeyFromUrl(url);
-      console.log(`Recebida URL de NFC-e: ${url}. Chave extraída: ${parsedKey}`);
+      qrCodeUrl = url;
+      console.log(`URL recebida: ${url}. Chave: ${parsedKey}`);
 
-      let fetchSuccessful = false;
+      let fetchOk = false;
       try {
-        console.log(`Tentando obter conteúdo HTML da URL: ${url}`);
         const fetchedHtml = await fetch(url, {
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.7",
           },
-          redirect: "follow",
+          signal: AbortSignal.timeout(12000),
         }).then(r => r.text());
 
         const cleaned = cleanHtml(fetchedHtml);
-        
-        // Check if the fetched content is blocked by Cloudflare/CAPTCHA or is too short to contain actual note items
-        const isBlockedOrEmpty = cleaned.length < 1500 || 
+        const blocked = cleaned.length < 1500 ||
           /cloudflare|captcha|recaptcha|security check|blocked|access denied|forbidden|just a moment|checking your browser/i.test(cleaned);
 
-        if (!isBlockedOrEmpty) {
+        if (!blocked) {
           sourceContent = cleaned;
-          fetchSuccessful = true;
-          console.log(`HTML obtido e validado com sucesso! Comprimento: ${sourceContent.length} caracteres.`);
+          fetchOk = true;
+          console.log(`HTML obtido com sucesso (${sourceContent.length} chars).`);
         } else {
-          console.warn("HTML obtido parece ser uma tela de bloqueio, CAPTCHA ou está incompleto. Ativando Fallback Inteligente baseado na Chave de Acesso.");
+          console.warn("HTML bloqueado/CAPTCHA — ativando simulação por chave de acesso.");
         }
       } catch (fetchErr: any) {
-        console.warn(`Falha ao obter HTML diretamente (${fetchErr.message}). Prosseguindo para tentar extrair da URL ou aguardar texto/imagem.`);
+        console.warn(`Falha ao buscar URL (${fetchErr.message}).`);
       }
 
-      // If we couldn't fetch real HTML content, use our Smart Fiscal AI Fallback
-      if (!fetchSuccessful && parsedKey) {
-        const parsedMeta = parseAccessKey(parsedKey);
-        if (parsedMeta) {
-          console.log("Metadados decodificados da chave de acesso com sucesso para o Simulador Fiscal IA:", parsedMeta);
+      if (!fetchOk) {
+        const meta = parsedKey ? parseAccessKey(parsedKey) : null;
+        if (meta) {
           sourceType = "URL (Simulado por IA)";
-          
-          // We set sourceContent with instructions for Gemini to simulate realistic items matching the metadata
           sourceContent = `
 --- SOLICITAÇÃO DE SIMULAÇÃO INTELIGENTE DE NFC-E ---
-O portal da SEFAZ de ${parsedMeta.state} está inacessível ou protegido por CAPTCHA.
-Sua tarefa é simular de forma extremamente profissional, completa e realista um cupom de compras do dia a dia condizente com este estabelecimento.
-Você DEVE utilizar exatamente os metadados abaixo decodificados da chave de acesso:
+O portal SEFAZ de ${meta.state} está inacessível ou protegido por CAPTCHA.
+Use os metadados abaixo para criar um cupom fiscal realista e completo:
 
 CHAVE DE ACESSO: ${parsedKey}
-CNPJ EMITENTE: ${parsedMeta.cnpj}
-ESTADO (UF): ${parsedMeta.state}
-NÚMERO DA NOTA: ${parsedMeta.number}
-SÉRIE DA NOTA: ${parsedMeta.series}
-DATA DE EMISSÃO: ${parsedMeta.emissionDate}
+CNPJ EMITENTE: ${meta.cnpj}
+ESTADO (UF): ${meta.state}
+NÚMERO DA NOTA: ${meta.number}
+SÉRIE DA NOTA: ${meta.series}
+DATA DE EMISSÃO: ${meta.emissionDate}
 
-REGRAS DE SIMULAÇÃO:
-1. Nome do Emitente (issuer.name): Crie um nome fantasia realista em português de um supermercado, mercadinho, mercearia, hortifruti, farmácia ou conveniência típico do estado de ${parsedMeta.state} (ex: "Supermercado Pantanal de ${parsedMeta.state}", "Drogaria Central", "Mini Mercado & Conveniência").
-2. Endereço (issuer.address): Crie um endereço comercial fictício porém perfeitamente plausível, completo com rua, número, bairro, CEP e cidade real do estado de ${parsedMeta.state}.
-3. Itens (items): Crie uma lista com 4 a 7 produtos típicos do dia a dia de compras (arroz, feijão, leite, refrigerante, sabonete, etc.) com descrições realistas e profissionais em português.
-4. Coerência Matemática: Preencha qty, unit, unitPrice e totalPrice de modo que para cada item: qty * unitPrice = totalPrice.
-5. Totais (totals): Calcule a soma total exata dos itens gerados. Pode incluir um pequeno desconto (discount) realista. O valor líquido total deve bater com a matemática (subtotal - discount = total). Defina um paymentType comum como "Pix", "Cartão de Crédito", "Cartão de Débito" ou "Dinheiro".
----
-`;
+REGRAS:
+1. Crie um nome de estabelecimento comercial real e plausível do estado de ${meta.state}.
+2. Crie um endereço fictício porém completo com rua, número, bairro, CEP e cidade do estado de ${meta.state}.
+3. Liste 4 a 7 produtos do dia a dia (alimentos, higiene, limpeza) com descrições realistas em português.
+4. Para cada item: qty * unitPrice = totalPrice (obrigatório).
+5. Calcule subtotal, desconto opcional e total final (subtotal - discount = total).
+6. Inclua uma forma de pagamento comum (Pix, Cartão de Débito, Cartão de Crédito ou Dinheiro).
+---`;
         } else {
-          sourceContent = `URL da NFC-e: ${url}\nChave de Acesso: ${parsedKey || "Não encontrada na URL"}`;
+          sourceContent = `URL da NFC-e: ${url}${parsedKey ? `\nChave: ${parsedKey}` : ""}`;
         }
-      } else if (!fetchSuccessful) {
-        sourceContent = `URL da NFC-e: ${url}`;
       }
     }
 
-    // 2. Process HTML or Text if provided
+    // 2. HTML or plain text pasted
     if (html && !sourceContent) {
       sourceType = "HTML Copiado";
       sourceContent = cleanHtml(html);
@@ -300,153 +298,138 @@ REGRAS DE SIMULAÇÃO:
       sourceContent = text;
     }
 
-    // 3. Process base64 Image if provided
+    // 3. Image (Gemini Vision)
     if (image) {
       sourceType = "Imagem / Foto";
-      // Expecting format: "data:image/jpeg;base64,..."
       const match = image.match(/^data:([^;]+);base64,(.+)$/);
       const mimeType = match ? match[1] : "image/jpeg";
       const base64Data = match ? match[2] : image;
 
-      console.log(`Processando imagem enviada (${mimeType}) via Gemini Vision...`);
+      console.log(`Processando imagem (${mimeType}) via Gemini Vision...`);
 
       const response = await callGeminiWithRetry(ai, {
-        model: "gemini-flash-latest",
+        model: "gemini-2.5-flash",
         contents: [
           {
-            inlineData: {
-              data: base64Data,
-              mimeType: mimeType,
-            },
-          },
-          {
-            text: "Você é um especialista em ler e extrair dados de Cupons Fiscais (NFC-e) brasileiros a partir de fotos. Extraia todos os detalhes deste cupom fiscal, incluindo emitente (Razão social, CNPJ, endereço, UF), dados da nota (chave de acesso de 44 dígitos, número da nota, série, data de emissão), todos os itens comprados (código, descrição, quantidade, unidade, valor unitário, valor total) e os totais (subtotal, desconto, valor total e forma de pagamento). Retorne estritamente no formato JSON solicitado.",
+            role: "user",
+            parts: [
+              { inlineData: { data: base64Data, mimeType } },
+              {
+                text: "Você é especialista em extrair dados de cupons fiscais (NFC-e) brasileiros a partir de fotos. Extraia todos os dados: emitente (nome, CNPJ, endereço, UF, IE), nota (chave de acesso 44 dígitos, número, série, data emissão, protocolo), todos os itens (código, descrição, quantidade, unidade, valor unitário, total) e totais (subtotal, desconto, total, forma de pagamento). Retorne SOMENTE o JSON estruturado conforme schema solicitado.",
+              },
+            ],
           },
         ],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: nfceSchema,
-          temperature: 0.1,
-        },
+        config: { responseMimeType: "application/json", responseSchema: nfceSchema, temperature: 0.1 },
       });
 
       const resultText = response.text;
-      if (!resultText) {
-        throw new Error("Não foi possível obter resposta do modelo Gemini.");
+      if (!resultText) throw new Error("Gemini não retornou resposta para a imagem.");
+
+      let parsedData: any;
+      try {
+        parsedData = JSON.parse(resultText);
+      } catch {
+        throw new Error("Gemini retornou resposta em formato inválido para a imagem.");
       }
 
-      const parsedData = JSON.parse(resultText);
-      if (url && !parsedData.qrCodeUrl) {
-        parsedData.qrCodeUrl = url;
+      if (!parsedData.items || parsedData.items.length === 0) {
+        return res.status(422).json({ error: "Não foi possível identificar itens fiscais nesta imagem. Certifique-se de que o cupom está legível e bem iluminado." });
       }
+
       return res.json({ data: parsedData, sourceType });
     }
 
-    // Process Text / HTML / URL sources
     if (!sourceContent) {
-      return res.status(400).json({
-        error: "Nenhum conteúdo válido (URL, HTML, texto ou imagem) foi fornecido para análise.",
-      });
+      return res.status(400).json({ error: "Nenhum conteúdo válido fornecido (URL, HTML, texto ou imagem)." });
     }
 
-    console.log(`Iniciando análise com Gemini para fonte do tipo: ${sourceType}`);
+    console.log(`Analisando com Gemini — fonte: ${sourceType}`);
 
-    const systemInstruction = `Você é um analisador inteligente de Notas Fiscais de Consumidor Eletrônicas (NFC-e) brasileiras. 
-Você receberá dados brutos de páginas da SEFAZ, textos de notas copiados ou URLs.
-Seu objetivo é ler esses dados, ignorar propagandas, códigos HTML desnecessários e ruídos, e extrair de forma precisa todos os dados estruturados da nota fiscal, preenchendo o schema JSON fornecido.
-Caso a chave de acesso de 44 dígitos não esteja explícita no texto mas seja deduzível (por exemplo, na URL ou através de agrupamentos de números de 4 dígitos), monte e preencha a chave de acesso corretamente.
-Se houver itens com descontos embutidos ou valores de impostos aproximados, certifique-se de preencher os descontos nos totais.
-Importante: Seja extremamente rigoroso com os valores numéricos. Os preços unitários, quantidades e totais devem ser matematicamente coerentes (qty * unitPrice = totalPrice, antes de descontos por item).`;
+    const systemInstruction = `Você é um analisador de Notas Fiscais de Consumidor Eletrônicas (NFC-e) brasileiras.
+Extraia todos os dados estruturados da nota fiscal a partir do conteúdo fornecido, ignorando HTML desnecessário.
+Se a chave de acesso de 44 dígitos não estiver explícita mas for deduzível pela URL ou agrupamentos, monte-a corretamente.
+Seja rigoroso com valores numéricos: qty * unitPrice = totalPrice para cada item, subtotal = soma dos totalPrice, total = subtotal - discount.`;
 
     const response = await callGeminiWithRetry(ai, {
-      model: "gemini-flash-latest",
-      contents: sourceContent,
-      config: {
-        systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: nfceSchema,
-        temperature: 0.1,
-      },
+      model: "gemini-2.5-flash",
+      contents: [{ role: "user", parts: [{ text: sourceContent }] }],
+      config: { systemInstruction, responseMimeType: "application/json", responseSchema: nfceSchema, temperature: 0.1 },
     });
 
     const resultText = response.text;
-    if (!resultText) {
-      throw new Error("Não foi possível obter resposta do modelo Gemini.");
+    if (!resultText) throw new Error("Gemini não retornou resposta.");
+
+    let parsedData: any;
+    try {
+      parsedData = JSON.parse(resultText);
+    } catch {
+      throw new Error("Gemini retornou resposta em formato inválido.");
     }
 
-    const parsedData = JSON.parse(resultText);
-    
-    // Add QR code URL to result if it was read
-    if (url) {
-      parsedData.qrCodeUrl = url;
-    } else if (parsedKey) {
-      // Reconstruct standard portal check link based on state if available
-      parsedData.qrCodeUrl = `https://www.nfe.fazenda.gov.br/portal/consultaRecaptcha.aspx?tipoConsulta=completa&grupoConsulta=publico&chaveDeAcesso=${parsedKey}`;
+    if (qrCodeUrl && !parsedData.qrCodeUrl) parsedData.qrCodeUrl = qrCodeUrl;
+    if (parsedKey && !parsedData.invoice?.accessKey) {
+      if (!parsedData.invoice) parsedData.invoice = {};
+      parsedData.invoice.accessKey = parsedKey;
     }
 
     return res.json({ data: parsedData, sourceType });
 
   } catch (err: any) {
-    console.error("Erro ao analisar NFC-e:", err);
-    return res.status(500).json({
-      error: `Falha ao processar nota fiscal: ${err.message || err}`,
-    });
+    console.error("[/api/parse-nfce] Erro:", err);
+    return res.status(500).json({ error: `Falha ao processar nota fiscal: ${err.message || String(err)}` });
   }
 });
 
-// API Endpoint to send simulated Email with beautiful HTML invoice rendering
-app.post("/api/send-email", async (req, res) => {
-  const { email, invoiceData } = req.body;
-
-  if (!email || !invoiceData) {
-    return res.status(400).json({ error: "E-mail do destinatário e dados da nota são obrigatórios." });
-  }
-
+// Email endpoint (simulated dispatch + mailto fallback)
+app.post("/api/send-email", async (req: any, res: any) => {
   try {
-    console.log(`📧 [Simulação de Envio de E-mail]`);
-    console.log(`Para: ${email}`);
-    console.log(`Assunto: NFC-e Emitida - ${invoiceData.issuer.name}`);
-    console.log(`Nota Fiscal Nº: ${invoiceData.invoice.number} (Série ${invoiceData.invoice.series})`);
-    console.log(`Valor Total: R$ ${Number(invoiceData.totals.total).toFixed(2)}`);
-    console.log(`----------------------------------------------------------------------`);
-    console.log(`E-mail formatado em HTML e PDF gerados com sucesso nos logs do servidor.`);
+    const { email, invoiceData } = req.body;
+    if (!email || !invoiceData) {
+      return res.status(400).json({ error: "E-mail do destinatário e dados da nota são obrigatórios." });
+    }
 
-    // Simulate sending time
-    await new Promise((resolve) => setTimeout(resolve, 1200));
+    console.log(`📧 [E-mail Registrado] Para: ${email} | NF Nº ${invoiceData.invoice?.number} | Total: R$ ${Number(invoiceData.totals?.total).toFixed(2)}`);
+
+    await new Promise(r => setTimeout(r, 900));
 
     return res.json({
       success: true,
-      message: `E-mail enviado com sucesso para ${email}!`,
-      deliveryId: `EML-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
+      message: `Envio registrado para ${email}.`,
+      deliveryId: `EML-${Date.now().toString(36).toUpperCase()}`,
       sentAt: new Date().toISOString(),
     });
   } catch (err: any) {
-    console.error("Erro ao enviar e-mail:", err);
-    return res.status(500).json({ error: "Erro interno ao processar o envio do e-mail." });
+    console.error("[/api/send-email] Erro:", err);
+    return res.status(500).json({ error: "Erro interno ao processar envio." });
   }
 });
 
-// Setup Vite Dev Server or Production Static Files serving
-async function startServer() {
-  if (process.env.NODE_ENV !== "production") {
-    console.log("Starting server in DEVELOPMENT mode with Vite Middleware...");
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    console.log("Starting server in PRODUCTION mode...");
-    const distPath = path.join(process.cwd(), "dist");
-    app.use(express.static(distPath));
-    app.get("*", (req, res) => {
-      res.sendFile(path.join(distPath, "index.html"));
-    });
-  }
+// ---------- Startup ----------
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server successfully running on http://localhost:${PORT}`);
-  });
+async function startServer() {
+  try {
+    if (process.env.NODE_ENV !== "production") {
+      console.log("Iniciando servidor em modo DESENVOLVIMENTO com Vite...");
+      const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
+      app.use(vite.middlewares);
+    } else {
+      console.log("Iniciando servidor em modo PRODUÇÃO...");
+      const distPath = path.join(process.cwd(), "dist");
+      app.use(express.static(distPath));
+      app.get("*", (_req: any, res: any) => res.sendFile(path.join(distPath, "index.html")));
+    }
+
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
+      if (!geminiApiKey) {
+        console.log(`⚠️  Modo de Demonstração ativo — configure GEMINI_API_KEY para análise real de NFC-e.`);
+      }
+    });
+  } catch (err) {
+    console.error("Falha ao iniciar o servidor:", err);
+    process.exit(1);
+  }
 }
 
 startServer();

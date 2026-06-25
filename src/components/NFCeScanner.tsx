@@ -117,13 +117,21 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
     try {
       const response = await fetch("/api/parse-nfce", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
 
-      const resData = await response.json();
+      // Safely parse response — server might return HTML on crash/proxy error
+      const rawText = await response.text();
+      let resData: any;
+      try {
+        resData = JSON.parse(rawText);
+      } catch {
+        console.error("Resposta não-JSON do servidor:", rawText.slice(0, 200));
+        throw new Error(
+          "O servidor não está respondendo corretamente. Verifique se ele está ativo e se a GEMINI_API_KEY está configurada nos Segredos do ambiente."
+        );
+      }
 
       if (!response.ok) {
         throw new Error(resData.error || "Ocorreu uma falha ao decodificar a NFC-e.");
@@ -132,7 +140,7 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
       if (resData.data) {
         onDataParsed(resData.data, resData.sourceType || "Desconhecido");
       } else {
-        throw new Error("Nenhum dado fiscal extraído.");
+        throw new Error("Nenhum dado fiscal foi extraído da fonte fornecida.");
       }
     } catch (err: any) {
       console.error("Parse error:", err);
