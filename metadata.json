@@ -1,0 +1,6 @@
+{
+  "name": "Leitor e Emissor de NFC-e",
+  "description": "Lê QR code de NFC-e, importa dados e gera PDF para compartilhar via Email ou WhatsApp.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
