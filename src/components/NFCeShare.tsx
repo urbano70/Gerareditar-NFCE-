@@ -195,7 +195,7 @@ export default function NFCeShare({ data, channel, onClose }: NFCeShareProps) {
                 ) : (
                   <form onSubmit={handleEmailSend} className="space-y-4">
                     <p className="text-xs text-slate-400 leading-relaxed">
-                      Insira o endereço de e-mail do destinatário. Enviaremos um resumo completo detalhado da nota fiscal diretamente pelo servidor.
+                      Digite o e-mail do destinatário. O resumo da nota será processado e você receberá um ID de controle. Use o link de atalho abaixo para abrir diretamente no seu cliente de e-mail (Outlook, Gmail etc.).
                     </p>
 
                     <div>
@@ -213,6 +213,17 @@ export default function NFCeShare({ data, channel, onClose }: NFCeShareProps) {
                       />
                     </div>
 
+                    {email && (
+                      <a
+                        href={getMailtoLink()}
+                        id="link-mailto-direct"
+                        className="flex items-center justify-center gap-1.5 w-full py-2 px-4 bg-[#121215] hover:bg-[#18181c] text-emerald-400 rounded-xl border border-emerald-500/20 text-xs font-semibold transition-all"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        Abrir no cliente de e-mail local (Outlook / Gmail)
+                      </a>
+                    )}
+
                     <button
                       type="submit"
                       id="btn-trigger-email-send"
@@ -222,12 +233,12 @@ export default function NFCeShare({ data, channel, onClose }: NFCeShareProps) {
                       {sending ? (
                         <>
                           <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin"></div>
-                          Enviando E-mail...
+                          Processando...
                         </>
                       ) : (
                         <>
                           <Send className="w-4 h-4" />
-                          Enviar E-mail
+                          Registrar Envio
                         </>
                       )}
                     </button>
@@ -267,9 +278,21 @@ export default function NFCeShare({ data, channel, onClose }: NFCeShareProps) {
                 </div>
 
                 {error && (
-                  <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl">
-                    <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
-                    <span>{error}</span>
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs rounded-xl">
+                      <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-red-400" />
+                      <span>{error}</span>
+                    </div>
+                    {email && (
+                      <a
+                        href={getMailtoLink()}
+                        id="link-mailto-error-fallback"
+                        className="flex items-center justify-center gap-1.5 w-full py-2 px-4 bg-[#121215] hover:bg-[#18181c] text-emerald-400 rounded-xl border border-emerald-500/20 text-xs font-semibold transition-all"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        Abrir no cliente de e-mail local como alternativa
+                      </a>
+                    )}
                   </div>
                 )}
               </motion.div>
@@ -285,12 +308,12 @@ export default function NFCeShare({ data, channel, onClose }: NFCeShareProps) {
                 </div>
                 <div>
                   <h4 className="text-base font-bold text-white">
-                    {channel === "whatsapp" ? "Sucesso!" : "E-mail Enviado!"}
+                    {channel === "whatsapp" ? "Sucesso!" : "Envio Registrado!"}
                   </h4>
                   <p className="text-xs text-slate-400 max-w-xs mx-auto mt-1 leading-normal">
-                    {channel === "whatsapp" 
-                      ? "O link de compartilhamento foi gerado e aberto com sucesso em uma nova aba." 
-                      : `A nota fiscal eletrônica auxiliar foi enviada para o e-mail do destinatário.`}
+                    {channel === "whatsapp"
+                      ? "O link de compartilhamento foi gerado e aberto com sucesso em uma nova aba."
+                      : "Envio registrado com ID de controle. Use o link abaixo para abrir no seu cliente de e-mail e confirmar a entrega."}
                   </p>
                 </div>
 
