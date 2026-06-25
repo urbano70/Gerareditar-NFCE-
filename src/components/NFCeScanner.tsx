@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, ChangeEvent, FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Camera, Upload, FileText, Globe, Search, Sparkles, Loader2, RefreshCw, AlertCircle } from "lucide-react";
+import { Camera, Upload, FileText, Globe, Search, Loader2, AlertCircle } from "lucide-react";
 import { Html5QrcodeScanner, Html5Qrcode } from "html5-qrcode";
 import { NFCeData } from "../types";
 
@@ -8,7 +8,7 @@ interface NFCeScannerProps {
   onDataParsed: (data: NFCeData, sourceType: string) => void;
 }
 
-type ScanTab = "camera" | "photo-ocr" | "html-paste" | "manual-url";
+type ScanTab = "camera" | "html-paste" | "manual-url";
 
 export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
   const [activeTab, setActiveTab] = useState<ScanTab>("camera");
@@ -24,7 +24,6 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
   // Refs for elements
   const qrCodeScannerRef = useRef<Html5Qrcode | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const ocrFileInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize camera scanner when "camera" tab is active and camera starts
   useEffect(() => {
@@ -102,13 +101,11 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
   };
 
   // Helper to send data to our Express backend
-  const processNFCeSource = async (payload: { url?: string; html?: string; text?: string; image?: string }) => {
+  const processNFCeSource = async (payload: { url?: string; html?: string; text?: string }) => {
     setLoading(true);
     setError(null);
 
-    if (payload.image) {
-      setLoadingMessage("Analisando foto da NFC-e com a IA do Gemini... Isso pode levar de 5 a 10 segundos.");
-    } else if (payload.url) {
+    if (payload.url) {
       setLoadingMessage("Acessando o portal do SEFAZ e extraindo cupom fiscal...");
     } else {
       setLoadingMessage("Processando dados e interpretando itens fiscais...");
@@ -172,27 +169,6 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
     }
   };
 
-  // File picker handler for Gemini Vision Receipt OCR
-  const handleOcrFileSelected = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setLoading(true);
-    setError(null);
-
-    // Convert file to base64
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const base64String = reader.result as string;
-      await processNFCeSource({ image: base64String });
-    };
-    reader.onerror = () => {
-      setError("Erro ao ler o arquivo de imagem.");
-      setLoading(false);
-    };
-    reader.readAsDataURL(file);
-  };
-
   const handleManualSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const cleanInput = manualInput.trim();
@@ -231,7 +207,6 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
         {(
           [
             { id: "camera", label: "Câmera", icon: Camera },
-            { id: "photo-ocr", label: "Foto da Nota (IA)", icon: Sparkles },
             { id: "html-paste", label: "Colar Dados", icon: FileText },
             { id: "manual-url", label: "Digitar URL", icon: Globe },
           ] as const
@@ -253,7 +228,7 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
               }`}
             >
-              <Icon className={`w-4 h-4 ${isActive && tab.id === "photo-ocr" ? "text-emerald-400" : ""}`} />
+              <Icon className="w-4 h-4" />
               <span>{tab.label}</span>
             </button>
           );
@@ -363,43 +338,6 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
                     </button>
                   </div>
                 )}
-              </motion.div>
-            )}
-
-            {activeTab === "photo-ocr" && (
-              <motion.div
-                key="photo-ocr-tab"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                className="flex flex-col items-center justify-center flex-1 py-4 text-center max-w-md mx-auto"
-              >
-                <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center mb-4 text-emerald-400 shadow-inner">
-                  <Sparkles className="w-8 h-8" />
-                </div>
-                <h3 className="text-base font-semibold text-white mb-1">Importar Foto da Nota Inteira (Leitura Inteligente)</h3>
-                <p className="text-xs text-slate-400 mb-6">
-                  Seu QR Code está rasgado ou ilegível? Tire uma foto nítida e completa do cupom fiscal de papel inteiro. Nossa IA do Gemini interpretará o cupom e recriará os itens automaticamente!
-                </p>
-
-                <input
-                  type="file"
-                  ref={ocrFileInputRef}
-                  onChange={handleOcrFileSelected}
-                  accept="image/*"
-                  className="hidden"
-                  id="ocr-file-input"
-                />
-                
-                <button
-                  id="btn-upload-photo-ocr"
-                  onClick={() => ocrFileInputRef.current?.click()}
-                  className="w-full bg-emerald-500 hover:bg-emerald-400 text-black font-semibold px-6 py-3 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-md cursor-pointer text-sm"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  Selecionar Foto do Cupom
-                </button>
-                <p className="text-[11px] text-slate-500 mt-3">Suporta formatos JPEG, PNG e WEBP.</p>
               </motion.div>
             )}
 

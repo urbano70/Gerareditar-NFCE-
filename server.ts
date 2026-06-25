@@ -450,50 +450,8 @@ REGRAS:
       sourceContent = text;
     }
 
-    // 3. Image (Gemini Vision)
-    if (image) {
-      sourceType = "Imagem / Foto";
-      const match = image.match(/^data:([^;]+);base64,(.+)$/);
-      const mimeType = match ? match[1] : "image/jpeg";
-      const base64Data = match ? match[2] : image;
-
-      console.log(`Processando imagem (${mimeType}) via Gemini Vision...`);
-
-      const response = await callGeminiWithRetry(ai, {
-        model: "gemini-2.5-flash",
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { inlineData: { data: base64Data, mimeType } },
-              {
-                text: "Você é especialista em extrair dados de cupons fiscais (NFC-e) brasileiros a partir de fotos. Extraia todos os dados: emitente (nome, CNPJ, endereço, UF, IE), nota (chave de acesso 44 dígitos, número, série, data emissão, protocolo), todos os itens (código, descrição, quantidade, unidade, valor unitário, total) e totais (subtotal, desconto, total, forma de pagamento). Retorne SOMENTE o JSON estruturado conforme schema solicitado.",
-              },
-            ],
-          },
-        ],
-        config: { responseMimeType: "application/json", responseSchema: nfceSchema, temperature: 0.1 },
-      });
-
-      const resultText = response.text;
-      if (!resultText) throw new Error("Gemini não retornou resposta para a imagem.");
-
-      let parsedData: any;
-      try {
-        parsedData = JSON.parse(resultText);
-      } catch {
-        throw new Error("Gemini retornou resposta em formato inválido para a imagem.");
-      }
-
-      if (!parsedData.items || parsedData.items.length === 0) {
-        return res.status(422).json({ error: "Não foi possível identificar itens fiscais nesta imagem. Certifique-se de que o cupom está legível e bem iluminado." });
-      }
-
-      return res.json({ data: parsedData, sourceType });
-    }
-
     if (!sourceContent) {
-      return res.status(400).json({ error: "Nenhum conteúdo válido fornecido (URL, HTML, texto ou imagem)." });
+      return res.status(400).json({ error: "Nenhum conteúdo válido fornecido (URL, HTML ou texto)." });
     }
 
     console.log(`Analisando com Gemini — fonte: ${sourceType}`);
