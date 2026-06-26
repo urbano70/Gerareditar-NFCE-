@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, ChangeEvent, FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Camera, Upload, FileText, Globe, Search, Loader2, AlertCircle, ImageUp } from "lucide-react";
+import { Camera, Upload, FileText, Globe, Search, Loader2, AlertCircle, FileUp } from "lucide-react";
 import { Html5QrcodeScanner, Html5Qrcode } from "html5-qrcode";
 import { NFCeData } from "../types";
 
@@ -15,10 +15,9 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
   const [scanning, setScanning] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("");
-  const [ocrProgress, setOcrProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [manualInput, setManualInput] = useState("");
-  const [ocrPreview, setOcrPreview] = useState<string | null>(null);
+  const [pdfFileName, setPdfFileName] = useState<string | null>(null);
 
   // HTML/Text Paste States
   const [pastedContent, setPastedContent] = useState("");
@@ -172,49 +171,48 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
     }
   };
 
-  // OCR handler: uses Tesseract.js to extract text from uploaded NFC-e screenshot
-  const handleOcrImageSelected = async (e: ChangeEvent<HTMLInputElement>) => {
+  // PDF handler: uses PDF.js to extract text directly from the NFC-e PDF
+  const handlePdfSelected = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setLoading(true);
     setError(null);
-    setOcrProgress(0);
-    setLoadingMessage("Carregando motor de leitura (primeira vez pode levar ~20s)...");
-
-    // Show image preview
-    const previewUrl = URL.createObjectURL(file);
-    setOcrPreview(previewUrl);
+    setPdfFileName(file.name);
+    setLoadingMessage("Lendo PDF da NFC-e...");
 
     try {
-      // Dynamic import — keeps the main bundle light
-      const Tesseract = (await import("tesseract.js")).default;
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+        "pdfjs-dist/build/pdf.worker.min.mjs",
+        import.meta.url
+      ).href;
 
-      setLoadingMessage("Lendo texto da imagem (OCR em português)...");
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
-      const { data: { text } } = await Tesseract.recognize(file, "por", {
-        logger: (m: any) => {
-          if (m.status === "recognizing text") {
-            setOcrProgress(Math.round(m.progress * 100));
-            setLoadingMessage(`Extraindo texto da imagem... ${Math.round(m.progress * 100)}%`);
-          }
-        },
-      });
-
-      if (!text || text.trim().length < 50) {
-        throw new Error("Não foi possível extrair texto legível desta imagem. Verifique se a imagem está nítida e contém texto da NFC-e.");
+      let fullText = "";
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+        const pageText = content.items
+          .map((item: any) => ("str" in item ? item.str : ""))
+          .join(" ");
+        fullText += pageText + "\n";
       }
 
-      setLoadingMessage("Identificando dados fiscais no texto extraído...");
-      await processNFCeSource({ text: text.trim() });
+      if (!fullText.trim() || fullText.trim().length < 30) {
+        throw new Error("O PDF não contém texto legível. Verifique se é o PDF da NFC-e gerado pelo portal SEFAZ.");
+      }
+
+      setLoadingMessage("Identificando dados fiscais...");
+      await processNFCeSource({ text: fullText.trim() });
     } catch (err: any) {
-      console.error("OCR error:", err);
-      setError(err.message || "Falha ao processar a imagem. Tente com uma imagem mais nítida.");
+      console.error("PDF error:", err);
+      setError(err.message || "Falha ao ler o PDF. Certifique-se de que é o arquivo PDF da NFC-e.");
     } finally {
       setLoading(false);
       setLoadingMessage("");
-      setOcrProgress(0);
-      // Reset file input so same file can be re-selected
       if (ocrFileInputRef.current) ocrFileInputRef.current.value = "";
     }
   };
@@ -257,7 +255,7 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
         {(
           [
             { id: "camera", label: "Câmera", icon: Camera },
-            { id: "upload-image", label: "Print da Nota", icon: ImageUp },
+            { id: "upload-image", label: "PDF da Nota", icon: FileUp },
             { id: "html-paste", label: "Colar Dados", icon: FileText },
             { id: "manual-url", label: "Digitar URL", icon: Globe },
           ] as const
@@ -272,7 +270,6 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
                 setActiveTab(tab.id);
                 setError(null);
                 setScanning(false);
-                setOcrPreview(null);
               }}
               className={`flex-1 flex items-center justify-center gap-1.5 py-3 px-1 rounded-xl text-[11px] sm:text-xs font-medium transition-all cursor-pointer ${
                 isActive
@@ -402,56 +399,40 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
                 className="flex flex-col items-center justify-center flex-1 py-4 text-center max-w-md mx-auto gap-4"
               >
                 <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-inner">
-                  <ImageUp className="w-8 h-8" />
+                  <FileUp className="w-8 h-8" />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-white mb-1">Print / Captura de Tela da Nota</h3>
+                  <h3 className="text-base font-semibold text-white mb-1">Upload do PDF da Nota</h3>
                   <p className="text-xs text-slate-400 leading-relaxed">
-                    Acesse o portal SEFAZ no navegador, tire um print (captura de tela) da página da NFC-e e faça o upload aqui. O app lê o texto da imagem e espelha a nota automaticamente.
+                    Acesse o portal SEFAZ no navegador, faça o download do PDF da NFC-e e envie aqui. O app extrai o texto diretamente do arquivo e espelha a nota automaticamente.
                   </p>
                 </div>
 
-                {ocrPreview && !loading && (
-                  <img
-                    src={ocrPreview}
-                    alt="Preview"
-                    className="w-full max-h-40 object-contain rounded-xl border border-white/10 bg-[#121215]"
-                  />
-                )}
-
-                {loading && ocrProgress > 0 && (
-                  <div className="w-full">
-                    <div className="flex justify-between text-[11px] text-slate-400 mb-1.5">
-                      <span>Extraindo texto da imagem...</span>
-                      <span>{ocrProgress}%</span>
-                    </div>
-                    <div className="w-full bg-white/5 rounded-full h-2">
-                      <div
-                        className="bg-emerald-500 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${ocrProgress}%` }}
-                      />
-                    </div>
+                {pdfFileName && !loading && (
+                  <div className="w-full flex items-center gap-2 px-4 py-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs">
+                    <FileUp className="w-4 h-4 shrink-0" />
+                    <span className="truncate font-medium">{pdfFileName}</span>
                   </div>
                 )}
 
                 <input
                   type="file"
                   ref={ocrFileInputRef}
-                  onChange={handleOcrImageSelected}
-                  accept="image/*"
+                  onChange={handlePdfSelected}
+                  accept="application/pdf,.pdf"
                   className="hidden"
-                  id="ocr-image-input"
+                  id="pdf-upload-input"
                 />
                 <button
-                  id="btn-upload-ocr-image"
-                  onClick={() => { setOcrPreview(null); ocrFileInputRef.current?.click(); }}
+                  id="btn-upload-pdf"
+                  onClick={() => { setPdfFileName(null); ocrFileInputRef.current?.click(); }}
                   disabled={loading}
                   className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:bg-white/5 disabled:text-slate-600 text-black font-semibold px-6 py-3 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-md cursor-pointer text-sm"
                 >
-                  <ImageUp className="w-4 h-4" />
-                  {loading ? "Processando imagem..." : "Selecionar Print da Nota"}
+                  <FileUp className="w-4 h-4" />
+                  {loading ? "Processando PDF..." : "Selecionar PDF da Nota"}
                 </button>
-                <p className="text-[11px] text-slate-500">Suporta JPEG, PNG e WEBP. Funciona sem API key.</p>
+                <p className="text-[11px] text-slate-500">Somente arquivos PDF. Funciona sem API key.</p>
               </motion.div>
             )}
 
