@@ -31,10 +31,16 @@ export interface NFCeTotals {
   paymentType: string;   // e.g. "Cartão de Crédito", "Dinheiro", "Pix", "Cartão de Débito"
 }
 
+export interface NFCeConsumer {
+  name?: string;
+  cpf?: string;
+}
+
 export interface NFCeData {
   issuer: NFCeIssuer;
   invoice: NFCeInvoiceInfo;
   items: NFCeItem[];
   totals: NFCeTotals;
   qrCodeUrl?: string;
+  consumer?: NFCeConsumer;
 }
