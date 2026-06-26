@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, ChangeEvent, FormEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { Camera, Upload, FileText, Globe, Search, Loader2, AlertCircle } from "lucide-react";
+import { Camera, Upload, FileText, Globe, Search, Loader2, AlertCircle, ImageUp } from "lucide-react";
 import { Html5QrcodeScanner, Html5Qrcode } from "html5-qrcode";
 import { NFCeData } from "../types";
 
@@ -8,22 +8,25 @@ interface NFCeScannerProps {
   onDataParsed: (data: NFCeData, sourceType: string) => void;
 }
 
-type ScanTab = "camera" | "html-paste" | "manual-url";
+type ScanTab = "camera" | "upload-image" | "html-paste" | "manual-url";
 
 export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
   const [activeTab, setActiveTab] = useState<ScanTab>("camera");
   const [scanning, setScanning] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("");
+  const [ocrProgress, setOcrProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [manualInput, setManualInput] = useState("");
-  
+  const [ocrPreview, setOcrPreview] = useState<string | null>(null);
+
   // HTML/Text Paste States
   const [pastedContent, setPastedContent] = useState("");
 
   // Refs for elements
   const qrCodeScannerRef = useRef<Html5Qrcode | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const ocrFileInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize camera scanner when "camera" tab is active and camera starts
   useEffect(() => {
@@ -169,6 +172,53 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
     }
   };
 
+  // OCR handler: uses Tesseract.js to extract text from uploaded NFC-e screenshot
+  const handleOcrImageSelected = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setLoading(true);
+    setError(null);
+    setOcrProgress(0);
+    setLoadingMessage("Carregando motor de leitura (primeira vez pode levar ~20s)...");
+
+    // Show image preview
+    const previewUrl = URL.createObjectURL(file);
+    setOcrPreview(previewUrl);
+
+    try {
+      // Dynamic import — keeps the main bundle light
+      const Tesseract = (await import("tesseract.js")).default;
+
+      setLoadingMessage("Lendo texto da imagem (OCR em português)...");
+
+      const { data: { text } } = await Tesseract.recognize(file, "por", {
+        logger: (m: any) => {
+          if (m.status === "recognizing text") {
+            setOcrProgress(Math.round(m.progress * 100));
+            setLoadingMessage(`Extraindo texto da imagem... ${Math.round(m.progress * 100)}%`);
+          }
+        },
+      });
+
+      if (!text || text.trim().length < 50) {
+        throw new Error("Não foi possível extrair texto legível desta imagem. Verifique se a imagem está nítida e contém texto da NFC-e.");
+      }
+
+      setLoadingMessage("Identificando dados fiscais no texto extraído...");
+      await processNFCeSource({ text: text.trim() });
+    } catch (err: any) {
+      console.error("OCR error:", err);
+      setError(err.message || "Falha ao processar a imagem. Tente com uma imagem mais nítida.");
+    } finally {
+      setLoading(false);
+      setLoadingMessage("");
+      setOcrProgress(0);
+      // Reset file input so same file can be re-selected
+      if (ocrFileInputRef.current) ocrFileInputRef.current.value = "";
+    }
+  };
+
   const handleManualSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const cleanInput = manualInput.trim();
@@ -207,6 +257,7 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
         {(
           [
             { id: "camera", label: "Câmera", icon: Camera },
+            { id: "upload-image", label: "Print da Nota", icon: ImageUp },
             { id: "html-paste", label: "Colar Dados", icon: FileText },
             { id: "manual-url", label: "Digitar URL", icon: Globe },
           ] as const
@@ -221,15 +272,16 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
                 setActiveTab(tab.id);
                 setError(null);
                 setScanning(false);
+                setOcrPreview(null);
               }}
-              className={`flex-1 flex items-center justify-center gap-1.5 py-3 px-2 rounded-xl text-xs sm:text-sm font-medium transition-all cursor-pointer ${
+              className={`flex-1 flex items-center justify-center gap-1.5 py-3 px-1 rounded-xl text-[11px] sm:text-xs font-medium transition-all cursor-pointer ${
                 isActive
                   ? "bg-[#121215] text-white shadow-md border border-white/10 font-semibold"
                   : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
               }`}
             >
-              <Icon className="w-4 h-4" />
-              <span>{tab.label}</span>
+              <Icon className="w-4 h-4 shrink-0" />
+              <span className="leading-tight text-center">{tab.label}</span>
             </button>
           );
         })}
@@ -338,6 +390,68 @@ export default function NFCeScanner({ onDataParsed }: NFCeScannerProps) {
                     </button>
                   </div>
                 )}
+              </motion.div>
+            )}
+
+            {activeTab === "upload-image" && (
+              <motion.div
+                key="upload-image-tab"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="flex flex-col items-center justify-center flex-1 py-4 text-center max-w-md mx-auto gap-4"
+              >
+                <div className="w-16 h-16 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400 shadow-inner">
+                  <ImageUp className="w-8 h-8" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-white mb-1">Print / Captura de Tela da Nota</h3>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Acesse o portal SEFAZ no navegador, tire um print (captura de tela) da página da NFC-e e faça o upload aqui. O app lê o texto da imagem e espelha a nota automaticamente.
+                  </p>
+                </div>
+
+                {ocrPreview && !loading && (
+                  <img
+                    src={ocrPreview}
+                    alt="Preview"
+                    className="w-full max-h-40 object-contain rounded-xl border border-white/10 bg-[#121215]"
+                  />
+                )}
+
+                {loading && ocrProgress > 0 && (
+                  <div className="w-full">
+                    <div className="flex justify-between text-[11px] text-slate-400 mb-1.5">
+                      <span>Extraindo texto da imagem...</span>
+                      <span>{ocrProgress}%</span>
+                    </div>
+                    <div className="w-full bg-white/5 rounded-full h-2">
+                      <div
+                        className="bg-emerald-500 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${ocrProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <input
+                  type="file"
+                  ref={ocrFileInputRef}
+                  onChange={handleOcrImageSelected}
+                  accept="image/*"
+                  className="hidden"
+                  id="ocr-image-input"
+                />
+                <button
+                  id="btn-upload-ocr-image"
+                  onClick={() => { setOcrPreview(null); ocrFileInputRef.current?.click(); }}
+                  disabled={loading}
+                  className="w-full bg-emerald-500 hover:bg-emerald-400 disabled:bg-white/5 disabled:text-slate-600 text-black font-semibold px-6 py-3 rounded-xl transition-colors flex items-center justify-center gap-2 shadow-md cursor-pointer text-sm"
+                >
+                  <ImageUp className="w-4 h-4" />
+                  {loading ? "Processando imagem..." : "Selecionar Print da Nota"}
+                </button>
+                <p className="text-[11px] text-slate-500">Suporta JPEG, PNG e WEBP. Funciona sem API key.</p>
               </motion.div>
             )}
 
