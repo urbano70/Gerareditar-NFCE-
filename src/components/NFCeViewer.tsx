@@ -56,8 +56,8 @@ const getSefazPortalUrl = (qrUrl?: string): string => {
   }
 };
 
-const NFCeLogoImg = () => (
-  <img src="/nfce-logo.png" alt="NFC-e" style={{ height: 48, width: "auto" }} />
+const NFCeLogoImg = ({ src }: { src: string }) => (
+  <img src={src} alt="NFC-e" style={{ height: 48, width: "auto" }} />
 );
 
 export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: NFCeViewerProps) {
@@ -73,8 +73,22 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
   const [accentColor, setAccentColor] = useState("#10b981");
   const [dragActive, setDragActive] = useState(false);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
+  const [nfceLogoDataUrl, setNfceLogoDataUrl] = useState<string>("/nfce-logo.png");
 
   const receiptRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch("/nfce-logo.png")
+      .then(r => r.blob())
+      .then(blob => new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      }))
+      .then(setNfceLogoDataUrl)
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     const target = data.qrCodeUrl || data.invoice.accessKey;
@@ -170,7 +184,8 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
     if (!element) return;
     setGeneratingPdf(true);
     try {
-      const canvas = await html2canvas(element, { scale: 2, useCORS: true, logging: false, backgroundColor: "#ffffff" });
+      const scale = Math.min(window.devicePixelRatio || 1, 2);
+      const canvas = await html2canvas(element, { scale, useCORS: true, allowTaint: true, logging: false, backgroundColor: "#ffffff" });
       const imgData = canvas.toDataURL("image/png");
       const pdfWidth = layout === "thermal" ? 80 : 210;
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
@@ -395,7 +410,7 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
           ) : (
             <div className="flex items-start gap-2 mb-3">
               <div className="shrink-0 mt-0.5">
-                <NFCeLogoImg />
+                <NFCeLogoImg src={nfceLogoDataUrl} />
               </div>
               <div className="flex-1 text-center">
                 {companyLogo && (
