@@ -125,6 +125,10 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
     setEditedData({ ...editedData, invoice: { ...editedData.invoice, [field]: value } });
   };
 
+  const handleConsumerChange = (value: string) => {
+    setEditedData({ ...editedData, consumer: { ...editedData.consumer, cpf: value } });
+  };
+
   const handleItemChange = (index: number, field: keyof NFCeItem, value: any) => {
     const updatedItems = [...editedData.items];
     const item = { ...updatedItems[index] };
@@ -619,6 +623,23 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
             </div>
           )}
 
+          {/* 8 — CONSUMIDOR (modo edição) */}
+          {isEditing && (
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2 mb-3">
+              <span className="text-[10px] font-bold text-slate-500 uppercase block">Consumidor</span>
+              <div>
+                <label className="text-[8px] font-bold text-slate-500 uppercase block">CPF do Consumidor (opcional)</label>
+                <input
+                  type="text"
+                  placeholder="000.000.000-00"
+                  value={editedData.consumer?.cpf || ""}
+                  onChange={(e) => handleConsumerChange(e.target.value)}
+                  className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs font-mono focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                />
+              </div>
+            </div>
+          )}
+
           {/* 8 — QR CODE + CONSUMIDOR + PROTOCOLO */}
           {!isEditing && (
             <div className="flex gap-3 border-b border-dashed border-black pb-3 mb-3 items-start">
@@ -633,11 +654,11 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
               </div>
               <div className="flex-1 text-[9px] text-center flex flex-col justify-center gap-1.5 pt-1">
                 <div>
-                  <p className="font-bold uppercase">{data.consumer?.name || "CONSUMIDOR"}</p>
-                  {data.consumer?.cpf && (
-                    <p>CONSUMIDOR CPF: {data.consumer.cpf}</p>
+                  {data.consumer?.cpf ? (
+                    <p>Consumidor: {data.consumer.cpf}</p>
+                  ) : (
+                    <p className="font-bold uppercase">CONSUMIDOR NÃO IDENTIFICADO</p>
                   )}
-                  <p className="font-bold uppercase">{data.consumer?.name || "CONSUMIDOR"}</p>
                 </div>
                 {data.invoice.protocol && (
                   <div className="mt-1">
