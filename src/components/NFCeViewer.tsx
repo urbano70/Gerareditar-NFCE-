@@ -776,10 +776,17 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
                   className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-[11px] font-mono focus:ring-1 focus:ring-emerald-500 focus:outline-none" />
               </div>
               <div>
-                <label className="text-[8px] font-bold text-slate-500 uppercase block">Data de Emissão</label>
-                <input type="text" value={editedData.invoice.emissionDate}
-                  onChange={(e) => handleInvoiceChange("emissionDate", e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none" />
+                <label className="text-[8px] font-bold text-slate-500 uppercase block">Data e Hora de Emissão</label>
+                <input
+                  type="datetime-local"
+                  value={editedData.invoice.emissionDate
+                    ? editedData.invoice.emissionDate.slice(0, 16)
+                    : ""}
+                  onChange={(e) =>
+                    handleInvoiceChange("emissionDate", e.target.value ? e.target.value + ":00" : "")
+                  }
+                  className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                />
               </div>
               <div>
                 <label className="text-[8px] font-bold text-slate-500 uppercase block">Protocolo de Autorização</label>
