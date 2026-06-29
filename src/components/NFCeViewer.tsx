@@ -5,7 +5,6 @@ import {
   Mail, MessageSquare, Sliders, UploadCloud,
 } from "lucide-react";
 import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
 import QRCode from "qrcode";
 import { NFCeData, NFCeItem } from "../types";
 
@@ -180,17 +179,180 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
   const handleCancelEdits = () => { setEditedData({ ...data }); setIsEditing(false); };
 
   const handleDownloadPdf = async () => {
-    const element = receiptRef.current;
-    if (!element) return;
     setGeneratingPdf(true);
     try {
-      const scale = Math.min(window.devicePixelRatio || 1, 2);
-      const canvas = await html2canvas(element, { scale, useCORS: true, allowTaint: true, logging: false, backgroundColor: "#ffffff" });
-      const imgData = canvas.toDataURL("image/png");
-      const pdfWidth = layout === "thermal" ? 80 : 210;
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: layout === "thermal" ? [80, Math.max(100, pdfHeight)] : "a4" });
-      pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+      const isTherm = layout === "thermal";
+      const pw = isTherm ? 80 : 210;
+      const mg = isTherm ? 4 : 15;
+      const cw = pw - mg * 2;
+      const fs = isTherm ? 6.5 : 8.5;
+
+      const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: isTherm ? [pw, 297] : "a4" });
+      pdf.setFont("courier", "normal");
+
+      let y = mg;
+
+      const lh = (size: number) => size * 0.3528 + 1.2;
+
+      const txt = (text: string, x: number, align: "left" | "center" | "right" = "left", maxW = cw, bold = false, size = fs) => {
+        pdf.setFontSize(size);
+        pdf.setFont("courier", bold ? "bold" : "normal");
+        const lines = pdf.splitTextToSize(text, maxW);
+        pdf.text(lines, x, y, { align });
+        y += lines.length * lh(size);
+      };
+
+      const sep = (dash = false) => {
+        y += 0.5;
+        pdf.setLineDashPattern(dash ? [1, 1] : [], 0);
+        pdf.line(mg, y, pw - mg, y);
+        pdf.setLineDashPattern([], 0);
+        y += 1.5;
+      };
+
+      const row = (left: string, right: string, bold = false, size = fs) => {
+        pdf.setFontSize(size);
+        pdf.setFont("courier", bold ? "bold" : "normal");
+        pdf.text(left, mg, y);
+        pdf.text(right, pw - mg, y, { align: "right" });
+        y += lh(size);
+      };
+
+      // ── Logo NFC-e ────────────────────────────────────────────────────────
+      const logoH = isTherm ? 8 : 12;
+      const logoW = logoH * 2.2;
+      if (nfceLogoDataUrl.startsWith("data:")) {
+        pdf.addImage(nfceLogoDataUrl, "PNG", mg, y, logoW, logoH);
+      }
+      const headerX = mg + logoW + 2;
+      const headerW = pw - mg - headerX;
+
+      // Store name + address next to logo
+      const savedY = y;
+      pdf.setFontSize(fs + 1);
+      pdf.setFont("courier", "bold");
+      const nameLines = pdf.splitTextToSize(data.issuer.name.toUpperCase(), headerW);
+      pdf.text(nameLines, headerX + headerW / 2, y + 1, { align: "center" });
+      y += nameLines.length * lh(fs + 1);
+
+      pdf.setFontSize(fs - 1);
+      pdf.setFont("courier", "normal");
+      const addrLines = pdf.splitTextToSize(data.issuer.address, headerW);
+      pdf.text(addrLines, headerX + headerW / 2, y, { align: "center" });
+      y += addrLines.length * lh(fs - 1);
+
+      const cnpjLine = `CNPJ: ${data.issuer.cnpj}${data.issuer.ie ? ` | IE: ${data.issuer.ie}` : ""}`;
+      pdf.text(pdf.splitTextToSize(cnpjLine, headerW), headerX + headerW / 2, y, { align: "center" });
+      y += lh(fs - 1);
+
+      y = Math.max(y, savedY + logoH) + 1;
+
+      // ── Título DANFE ──────────────────────────────────────────────────────
+      sep();
+      txt("DANFE NFC-e – DOCUMENTO AUXILIAR", pw / 2, "center", cw, true, fs);
+      txt("DA NOTA FISCAL ELETRÔNICA DE CONSUMIDOR FINAL", pw / 2, "center", cw, true, fs);
+      txt("Não permite aproveitamento de crédito do ICMS", pw / 2, "center", cw, false, fs - 1);
+      sep();
+
+      // ── Cabeçalho da tabela de itens ──────────────────────────────────────
+      const colDesc = mg + 8;
+      const colQty  = pw - mg - 34;
+      const colUn   = pw - mg - 24;
+      const colUnit = pw - mg - 13;
+      const colTot  = pw - mg;
+
+      pdf.setFontSize(fs - 1);
+      pdf.setFont("courier", "bold");
+      pdf.text("Cód", mg, y);
+      pdf.text("Descrição", colDesc, y);
+      pdf.text("Qtd", colQty, y, { align: "right" });
+      pdf.text("Un", colUn, y, { align: "center" });
+      pdf.text("V.Unit", colUnit, y, { align: "right" });
+      pdf.text("V.Total", colTot, y, { align: "right" });
+      y += lh(fs - 1);
+      sep(true);
+
+      // ── Itens ─────────────────────────────────────────────────────────────
+      const descW = colQty - colDesc - 1;
+      pdf.setFont("courier", "normal");
+      data.items.forEach(item => {
+        pdf.setFontSize(fs - 1);
+        const descLines = pdf.splitTextToSize(item.description, descW);
+        pdf.text(String(item.code || "").substring(0, 6), mg, y);
+        pdf.text(descLines[0], colDesc, y);
+        pdf.text(item.qty.toFixed(2).replace(".", ","), colQty, y, { align: "right" });
+        pdf.text(item.unit, colUn, y, { align: "center" });
+        pdf.text(item.unitPrice.toFixed(2).replace(".", ","), colUnit, y, { align: "right" });
+        pdf.text(item.totalPrice.toFixed(2).replace(".", ","), colTot, y, { align: "right" });
+        y += lh(fs - 1);
+        for (let i = 1; i < descLines.length; i++) {
+          pdf.text(descLines[i], colDesc, y);
+          y += lh(fs - 1);
+        }
+      });
+
+      sep(true);
+
+      // ── Totais ────────────────────────────────────────────────────────────
+      row("Qtd. Total de Itens", String(data.items.length));
+      row("Valor Total", `R$ ${brMoney(data.totals.subtotal)}`);
+      row("Valor Desconto", `R$ ${brMoney(data.totals.discount)}`);
+      row("Valor Troco", "R$ 0,00");
+      sep(true);
+
+      row("Forma de Pagamento", "Valor Pago", true);
+      row(data.totals.paymentType || "Dinheiro", brMoney(data.totals.total));
+      sep();
+
+      // ── Tributos ──────────────────────────────────────────────────────────
+      if (data.totals.icms && data.totals.icms > 0) {
+        const icmsPct = ((data.totals.icms / (data.totals.total || 1)) * 100).toFixed(2);
+        txt(`Valor aprox. dos Tributos: R$ ${brMoney(data.totals.icms)} (${icmsPct}%) (Lei Federal 12.741/2012)`, pw / 2, "center", cw, false, fs - 1.5);
+        sep(true);
+      }
+
+      // ── Metadados da nota ─────────────────────────────────────────────────
+      txt(`Número: ${formatInvoiceNumber(data.invoice.number)} - Série: ${data.invoice.series}`, pw / 2, "center", cw, false, fs - 1);
+      txt(`Emissão ${formatEmissionDate(data.invoice.emissionDate)}`, pw / 2, "center", cw, false, fs - 1);
+      txt("Consulte pela chave de acesso em:", pw / 2, "center", cw, false, fs - 1);
+      txt(getSefazPortalUrl(data.qrCodeUrl), pw / 2, "center", cw, false, fs - 1.5);
+      txt(formatAccessKey(data.invoice.accessKey), pw / 2, "center", cw, false, fs - 2);
+      sep(true);
+
+      // ── QR Code + Consumidor + Protocolo ──────────────────────────────────
+      const qrSize = isTherm ? 26 : 36;
+      if (qrCodeDataUrl) {
+        pdf.addImage(qrCodeDataUrl, "PNG", mg, y, qrSize, qrSize);
+      }
+      const infoX = mg + qrSize + 2;
+      const infoW = pw - mg - infoX;
+      const savedY2 = y;
+
+      pdf.setFontSize(fs - 1);
+      pdf.setFont("courier", "normal");
+      if (data.consumer?.cpf) {
+        pdf.text(`Consumidor: ${data.consumer.cpf}`, infoX, y + 3);
+      } else {
+        pdf.text("CONSUMIDOR NÃO IDENTIFICADO", infoX, y + 3);
+      }
+      if (data.invoice.protocol) {
+        pdf.setFont("courier", "bold");
+        pdf.text("Protocolo de Autorização", infoX, y + 9);
+        pdf.setFont("courier", "normal");
+        pdf.setFontSize(fs - 2);
+        const protLines = pdf.splitTextToSize(
+          `${data.invoice.protocol} ${formatEmissionDate(data.invoice.emissionDate)}`,
+          infoW
+        );
+        pdf.text(protLines, infoX, y + 13);
+      }
+      y = Math.max(y + qrSize, savedY2 + 5) + 2;
+
+      sep(true);
+
+      // ── Rodapé ────────────────────────────────────────────────────────────
+      txt(`PROCON ${data.issuer.state || "BR"}: www.procon.${(data.issuer.state || "br").toLowerCase()}.gov.br ou 151.`, pw / 2, "center", cw, false, fs - 1.5);
+
       pdf.save(`NFCe_${data.invoice.number || "nota"}.pdf`);
     } catch (err) {
       console.error("Falha ao gerar PDF:", err);
@@ -614,10 +776,17 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
                   className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-[11px] font-mono focus:ring-1 focus:ring-emerald-500 focus:outline-none" />
               </div>
               <div>
-                <label className="text-[8px] font-bold text-slate-500 uppercase block">Data de Emissão</label>
-                <input type="text" value={editedData.invoice.emissionDate}
-                  onChange={(e) => handleInvoiceChange("emissionDate", e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none" />
+                <label className="text-[8px] font-bold text-slate-500 uppercase block">Data e Hora de Emissão</label>
+                <input
+                  type="datetime-local"
+                  value={editedData.invoice.emissionDate
+                    ? editedData.invoice.emissionDate.slice(0, 16)
+                    : ""}
+                  onChange={(e) =>
+                    handleInvoiceChange("emissionDate", e.target.value ? e.target.value + ":00" : "")
+                  }
+                  className="w-full bg-white border border-slate-300 rounded px-2 py-1 text-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                />
               </div>
               <div>
                 <label className="text-[8px] font-bold text-slate-500 uppercase block">Protocolo de Autorização</label>
