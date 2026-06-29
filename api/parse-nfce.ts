@@ -164,48 +164,55 @@ function parsePdfText(rawText: string): any | null {
     const t = rawText.replace(/\r?\n/g, " ").replace(/\s{2,}/g, " ").trim();
     if (t.length < 60) return null;
 
-    const cnpjMatch = t.match(/CNPJ[:\s]*(\d{2}[.\s]?\d{3}[.\s]?\d{3}\/\d{4}-\d{2})/i);
+    // ── CNPJ: try with "CNPJ" label first, then bare formatted pattern ────────
+    const cnpjMatch =
+      t.match(/CNPJ[/.\s:]*(\d{2}\.?\d{3}\.?\d{3}[\/.]\d{4}-?\d{2})/i) ||
+      t.match(/(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/);
+
     if (!cnpjMatch) return null;
-    const cnpj = cnpjMatch[1].replace(/\s/g, "");
+    const rawCnpjDigits = cnpjMatch[1].replace(/\D/g, "");
+    const cnpj = rawCnpjDigits.length === 14
+      ? rawCnpjDigits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, "$1.$2.$3/$4-$5")
+      : cnpjMatch[1];
 
     const ieMatch = t.match(/(?:IE|Insc\.?\s*Est\.?)[:\s-]+(\d[\d./-]{3,20})/i);
     const ie = ieMatch?.[1];
 
     const keyGroupMatch = t.match(/(\d{4}(?:\s\d{4}){10})/);
-    const keyRawMatch = t.match(/\b(\d{44})\b/);
-    const rawKey = keyGroupMatch?.[1] || keyRawMatch?.[1] || "";
+    const keyRawMatch   = t.match(/\b(\d{44})\b/);
+    const rawKey   = keyGroupMatch?.[1] || keyRawMatch?.[1] || "";
     const accessKey = rawKey.replace(/\s/g, "");
-    const keyMeta = accessKey.length === 44 ? parseAccessKey(accessKey) : null;
+    const keyMeta  = accessKey.length === 44 ? parseAccessKey(accessKey) : null;
 
-    const stateMatch = t.match(/[–\-,]\s*([A-Z]{2})\s*(?:CEP|\d{5})/);
+    const stateMatch = t.match(/[-–,]\s*([A-Z]{2})\s*[,\s-]*(?:CEP\b|\d{5}-?\d{3})/);
     const state = stateMatch?.[1] || keyMeta?.state || "SP";
 
-    const cnpjPos = t.indexOf(cnpjMatch[0]);
+    const cnpjPos    = t.indexOf(cnpjMatch[0]);
     const beforeCnpj = t.substring(0, cnpjPos).trim();
     let storeName = "";
-    let address = "";
-    const addrIdx = beforeCnpj.search(/\b(?:RUA|R\.\s|AV\.?\s|AVENIDA|ESTRADA|ESTR\.?\s|RODOVIA|ROD\.?\s|ALAMEDA|AL\.?\s|PRA[ÇC]A|QUADRA|QD\.?\s|SQN|SCLN|SETOR)\b/i);
+    let address   = "";
+    const addrIdx = beforeCnpj.search(/\b(?:RUA\b|R\.\s|AV[.\s]|AVENIDA\b|ESTRADA\b|ESTR\.\s|RODOVIA\b|ROD\.\s|ALAMEDA\b|AL\.\s|PRA[ÇC]A\b|QUADRA\b|QD\.\s|SQN\b|SCLN\b|SETOR\b|TRAVESSA\b|TRAV\.\s)/i);
     if (addrIdx > 0) {
       storeName = beforeCnpj.substring(0, addrIdx).trim();
-      address = beforeCnpj.substring(addrIdx).trim();
+      address   = beforeCnpj.substring(addrIdx).trim();
     } else {
       storeName = beforeCnpj.replace(/\s+/g, " ").trim().substring(0, 100);
     }
 
-    const numberMatch = t.match(/N[uú]mero[:\s]+(\d[\d.]+)/i);
-    const seriesMatch = t.match(/S[eé]rie[:\s]+(\d+)/i);
+    const numberMatch = t.match(/N[uú]mero[:\s]+0*(\d+)/i);
+    const seriesMatch = t.match(/S[eé]rie[:\s]+0*(\d+)/i);
     const number = numberMatch ? numberMatch[1].replace(/\./g, "") : (keyMeta?.number || "1");
     const series = seriesMatch ? seriesMatch[1] : (keyMeta?.series || "1");
 
     const dateMatch =
-      t.match(/Emiss[aã]o\s+(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2}(?::\d{2})?)/i) ||
+      t.match(/Emiss[aã]o[:\s]+(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2}(?::\d{2})?)/i) ||
       t.match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}:\d{2}:\d{2})/);
     const rawTime = dateMatch?.[4] || "00:00:00";
     const emissionDate = dateMatch
       ? `${dateMatch[3]}-${dateMatch[2]}-${dateMatch[1]}T${rawTime.length === 5 ? rawTime + ":00" : rawTime}`
       : (keyMeta?.emissionDate || new Date().toISOString().slice(0, 19));
 
-    const protocolMatch = t.match(/Protocolo\s+de\s+Autoriza[çc][aã]o\s+(\d{10,20})/i);
+    const protocolMatch = t.match(/Protocolo\s+de\s+Autoriza[çc][aã]o[:\s]+(\d{10,20})/i);
     const protocol = protocolMatch?.[1];
 
     const cpfMatch = t.match(/CPF[:\s]+(\d{3}[.\s]?\d{3}[.\s]?\d{3}[-\s]?\d{2})/i);
@@ -213,38 +220,44 @@ function parsePdfText(rawText: string): any | null {
       ? { cpf: cpfMatch[1].replace(/[\s.]/g, "").replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4") }
       : undefined;
 
-    const headerEndIdx = t.search(/VL\.?\s*TOTAL\b/i);
-    const totalsIdx = t.search(/Qtd\.?\s*Total\s+de\s+Itens|VALOR\s+TOTAL\b/i);
+    // Item section: from first VL.TOTAL header to totals block
+    const allHeaderMatches = [...t.matchAll(/VL\.?\s*TOTAL\b/gi)];
+    const headerMatch = allHeaderMatches[0];
+    const headerEndIdx = headerMatch ? (headerMatch.index! + headerMatch[0].length) : -1;
+    const totalsStart = t.search(/Qtd\.?\s*Total\s+de\s+Itens|Valor\s+Total\b[:\s]+R?\$?/i);
     const itemSection = headerEndIdx > -1
-      ? t.substring(headerEndIdx + 8, totalsIdx > headerEndIdx ? totalsIdx : headerEndIdx + 1000).trim()
+      ? t.substring(headerEndIdx, totalsStart > headerEndIdx ? totalsStart : headerEndIdx + 2000).trim()
       : t;
 
+    // QTD accepts integer or 1-4 decimal places (fixes "1 UN" case)
     const items: any[] = [];
     const UNIT_PAT = "UN|KG|LT|L|PC|CX|GR|ML|MT|M|PAR|FD|DZ|SC|RL|G|KIT|CJ|BD|FR|PT|CT|AM|VD|GF|P[ÇC]|JG";
     const itemRe = new RegExp(
-      `(?:^|\\s)(?:\\d{1,8}\\s+)?([A-ZÀ-Ÿ][A-ZÀ-Ÿ0-9 \\-\\.\\/()%+*&@!]{1,70}?)` +
-      `\\s+(\\d+[,.]\\d{2,3})\\s+(${UNIT_PAT})\\s+(\\d+(?:[,.]\\d{3})*[,.]\\d{2})\\s+(\\d+(?:[,.]\\d{3})*[,.]\\d{2})`,
+      `(?:^|\\s)(?:\\d{1,8}\\s+)?` +
+      `([A-ZÀ-Ÿa-zà-ÿ][\\wÀ-ÿ \\-\\.\\/()%+*&@!]{1,70}?)` +
+      `\\s+(\\d+(?:[,.]\\d{1,4})?)` +
+      `\\s+(${UNIT_PAT})\\b` +
+      `\\s+(\\d+(?:[,.]\\d{3})*[,.]\\d{2,3})` +
+      `\\s+(\\d+(?:[,.]\\d{3})*[,.]\\d{2,3})`,
       "gi"
     );
     let m: RegExpExecArray | null;
     while ((m = itemRe.exec(itemSection)) !== null) {
       const desc = m[1].trim();
       if (desc.length < 2 || desc.length > 80) continue;
-      if (/^(DANFE|SEFAZ|COD|QTD|VL\.|DESCRI[ÇC]|CONSUMIDOR|PROTOCOLO|PROCON|EMISS)/i.test(desc)) continue;
+      if (/^(DANFE|SEFAZ|COD\b|QTD\b|VL\.|DESCRI[ÇC]|CONSUMIDOR|PROTOCOLO|PROCON|EMISS|FORMA\s+DE|VALOR\s+(?:TOTAL|DESC))/i.test(desc)) continue;
       const qty = parseFloat(m[2].replace(",", "."));
       const unit = m[3].toUpperCase();
-      const unitPrice = parseNum(m[4]);
+      const unitPrice  = parseNum(m[4]);
       const totalPrice = parseNum(m[5]);
       if (qty > 0 && totalPrice > 0) {
-        items.push({ code: "", description: desc, qty, unit, unitPrice, totalPrice });
+        items.push({ code: "", description: desc.toUpperCase(), qty, unit, unitPrice, totalPrice });
       }
     }
 
-    if (items.length === 0) return null;
-
-    const totalValMatch = t.match(/Valor\s+Total\s+R\$\s*([\d.,]+)/i);
-    const discValMatch  = t.match(/Valor\s+Desconto\s+R\$\s*([\d.,]+)/i);
-    const payMatch      = t.match(/(?:PIX(?:\s*[-–]\s*[\wÀ-ÿ]+)?|Cart[aã]o\s+de\s+(?:D[eé]bito|Cr[eé]dito)|Dinheiro|Transfer[eê]ncia)/i);
+    const totalValMatch = t.match(/Valor\s+Total\b[:\s]*R?\$?\s*([\d.,]+)/i);
+    const discValMatch  = t.match(/(?:Valor\s+)?Desconto[:\s]*R?\$?\s*([\d.,]+)/i);
+    const payMatch      = t.match(/(?:PIX(?:\s*[-–]\s*[\wÀ-ÿ]+)?|Pix\b|Cart[aã]o\s+de\s+(?:D[eé]bito|Cr[eé]dito)|Dinheiro|Transfer[eê]ncia|Boleto)/i);
 
     const computedSub = items.reduce((s: number, i: any) => s + i.totalPrice, 0);
     const discount    = discValMatch ? parseNum(discValMatch[1]) : 0;
@@ -436,7 +449,17 @@ export default async function handler(req: any, res: any) {
     // ── 3.5. Try PDF text parser ─────────────────────────────────────────────
     if (text && !url) {
       const parsed = parsePdfText(text);
-      if (parsed) return res.json({ data: parsed, sourceType: "PDF (Parser Direto)" });
+      if (parsed) {
+        const srcLabel = parsed.items?.length > 0 ? "PDF (Parser Direto)" : "PDF (Dados Parciais)";
+        return res.json({ data: parsed, sourceType: srcLabel });
+      }
+      // CNPJ not found — don't silently fall to demo
+      if (!ai) {
+        return res.status(422).json({
+          error: "Não foi possível extrair os dados fiscais deste PDF. Verifique se é o PDF oficial da NFC-e do portal SEFAZ. Alternativamente, use a aba 'Colar Dados' com o conteúdo copiado da página da nota.",
+        });
+      }
+      // With AI available, fall through to Gemini
     }
 
     // ── 4. No AI → demo mode ─────────────────────────────────────────────────
