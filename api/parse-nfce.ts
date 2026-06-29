@@ -164,11 +164,10 @@ function parsePdfText(rawText: string): any | null {
     const t = rawText.replace(/\r?\n/g, " ").replace(/\s{2,}/g, " ").trim();
     if (t.length < 60) return null;
 
-    // ── CNPJ: try with "CNPJ" label first, then bare formatted pattern ────────
+    // ── CNPJ (mandatory anchor) ───────────────────────────────────────────────
     const cnpjMatch =
       t.match(/CNPJ[/.\s:]*(\d{2}\.?\d{3}\.?\d{3}[\/.]\d{4}-?\d{2})/i) ||
       t.match(/(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/);
-
     if (!cnpjMatch) return null;
     const rawCnpjDigits = cnpjMatch[1].replace(/\D/g, "");
     const cnpj = rawCnpjDigits.length === 14
@@ -178,6 +177,7 @@ function parsePdfText(rawText: string): any | null {
     const ieMatch = t.match(/(?:IE|Insc\.?\s*Est\.?)[:\s-]+(\d[\d./-]{3,20})/i);
     const ie = ieMatch?.[1];
 
+    // ── Access key ────────────────────────────────────────────────────────────
     const keyGroupMatch = t.match(/(\d{4}(?:\s\d{4}){10})/);
     const keyRawMatch   = t.match(/\b(\d{44})\b/);
     const rawKey   = keyGroupMatch?.[1] || keyRawMatch?.[1] || "";
@@ -187,18 +187,34 @@ function parsePdfText(rawText: string): any | null {
     const stateMatch = t.match(/[-–,]\s*([A-Z]{2})\s*[,\s-]*(?:CEP\b|\d{5}-?\d{3})/);
     const state = stateMatch?.[1] || keyMeta?.state || "SP";
 
+    // ── Store name: strip payment/price noise that PDF.js puts before CNPJ ────
     const cnpjPos    = t.indexOf(cnpjMatch[0]);
     const beforeCnpj = t.substring(0, cnpjPos).trim();
+    const cleanedBefore = beforeCnpj
+      .replace(/VALOR\s+PAGO[^A-ZÁÉÍÓÚÂÊÔÃÕÇ]{0,40}/gi, " ")
+      .replace(/R\$\s*:?\s*[\d.,]+/gi, " ")
+      .replace(/\bNAN\b/gi, " ")
+      .replace(/\b\d+[,.]\d{2}\b/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+
     let storeName = "";
     let address   = "";
-    const addrIdx = beforeCnpj.search(/\b(?:RUA\b|R\.\s|AV[.\s]|AVENIDA\b|ESTRADA\b|ESTR\.\s|RODOVIA\b|ROD\.\s|ALAMEDA\b|AL\.\s|PRA[ÇC]A\b|QUADRA\b|QD\.\s|SQN\b|SCLN\b|SETOR\b|TRAVESSA\b|TRAV\.\s)/i);
+    const addrKeyword = /\b(?:RUA\b|R\.\s|AV[.\s]|AVENIDA\b|ESTRADA\b|ESTR\.\s|RODOVIA\b|ROD\.\s|ALAMEDA\b|AL\.\s|PRA[ÇC]A\b|QUADRA\b|QD\.\s|SQN\b|SCLN\b|SETOR\b|TRAVESSA\b|TRAV\.\s)/i;
+    const addrIdx = cleanedBefore.search(addrKeyword);
     if (addrIdx > 0) {
-      storeName = beforeCnpj.substring(0, addrIdx).trim();
-      address   = beforeCnpj.substring(addrIdx).trim();
+      storeName = cleanedBefore.substring(0, addrIdx).replace(/\s+/g, " ").trim();
+      address   = cleanedBefore.substring(addrIdx).trim();
     } else {
-      storeName = beforeCnpj.replace(/\s+/g, " ").trim().substring(0, 100);
+      const globalAddrMatch = t.match(
+        /\b(?:RUA|AV(?:ENIDA)?\.?|ESTRADA|RODOVIA|ALAMEDA|PRA[ÇC]A|QUADRA|TRAVESSA|SETOR|SQN|SCLN)\b[^,]{3,60}(?:,\s*[^,]{3,60}){0,3}(?:\s*[-–,]\s*[A-Z]{2}|\s*CEP\s*:?\s*\d{5}[-.]?\d{3})/i
+      );
+      if (globalAddrMatch) address = globalAddrMatch[0].trim();
+      storeName = cleanedBefore.replace(/\s+/g, " ").trim().substring(0, 100);
     }
+    storeName = storeName.replace(/^\s*[\d\s,.]+/, "").trim();
 
+    // ── Invoice metadata ──────────────────────────────────────────────────────
     const numberMatch = t.match(/N[uú]mero[:\s]+0*(\d+)/i);
     const seriesMatch = t.match(/S[eé]rie[:\s]+0*(\d+)/i);
     const number = numberMatch ? numberMatch[1].replace(/\./g, "") : (keyMeta?.number || "1");
@@ -220,19 +236,21 @@ function parsePdfText(rawText: string): any | null {
       ? { cpf: cpfMatch[1].replace(/[\s.]/g, "").replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, "$1.$2.$3-$4") }
       : undefined;
 
-    // Item section: from first VL.TOTAL header to totals block
+    // ── Item section: two strategies ──────────────────────────────────────────
     const allHeaderMatches = [...t.matchAll(/VL\.?\s*TOTAL\b/gi)];
-    const headerMatch = allHeaderMatches[0];
-    const headerEndIdx = headerMatch ? (headerMatch.index! + headerMatch[0].length) : -1;
+    const firstHeader = allHeaderMatches[0];
+    const headerEndIdx = firstHeader ? (firstHeader.index! + firstHeader[0].length) : -1;
     const totalsStart = t.search(/Qtd\.?\s*Total\s+de\s+Itens|Valor\s+Total\b[:\s]+R?\$?/i);
-    const itemSection = headerEndIdx > -1
-      ? t.substring(headerEndIdx, totalsStart > headerEndIdx ? totalsStart : headerEndIdx + 2000).trim()
-      : t;
+    const afterCnpjIdx = cnpjPos + cnpjMatch[0].length;
 
-    // QTD accepts integer or 1-4 decimal places (fixes "1 UN" case)
-    const items: any[] = [];
+    const sectionA = headerEndIdx > -1
+      ? t.substring(headerEndIdx, totalsStart > headerEndIdx ? totalsStart : headerEndIdx + 2000).trim()
+      : "";
+    const sectionB = t.substring(afterCnpjIdx, totalsStart > afterCnpjIdx ? totalsStart : afterCnpjIdx + 3000).trim();
+
     const UNIT_PAT = "UN|KG|LT|L|PC|CX|GR|ML|MT|M|PAR|FD|DZ|SC|RL|G|KIT|CJ|BD|FR|PT|CT|AM|VD|GF|P[ÇC]|JG";
-    const itemRe = new RegExp(
+    const SKIP_DESC = /^(DANFE|SEFAZ|COD\b|QTD\b|VL\.|DESCRI[ÇC]|CONSUMIDOR|PROTOCOLO|PROCON|EMISS|FORMA\s+DE|VALOR|SERIE|N[ÚU]MERO|DATA|CHAVE|CONSULTE)/i;
+    const buildItemRe = () => new RegExp(
       `(?:^|\\s)(?:\\d{1,8}\\s+)?` +
       `([A-ZÀ-Ÿa-zà-ÿ][\\wÀ-ÿ \\-\\.\\/()%+*&@!]{1,70}?)` +
       `\\s+(\\d+(?:[,.]\\d{1,4})?)` +
@@ -241,21 +259,32 @@ function parsePdfText(rawText: string): any | null {
       `\\s+(\\d+(?:[,.]\\d{3})*[,.]\\d{2,3})`,
       "gi"
     );
-    let m: RegExpExecArray | null;
-    while ((m = itemRe.exec(itemSection)) !== null) {
-      const desc = m[1].trim();
-      if (desc.length < 2 || desc.length > 80) continue;
-      if (/^(DANFE|SEFAZ|COD\b|QTD\b|VL\.|DESCRI[ÇC]|CONSUMIDOR|PROTOCOLO|PROCON|EMISS|FORMA\s+DE|VALOR\s+(?:TOTAL|DESC))/i.test(desc)) continue;
-      const qty = parseFloat(m[2].replace(",", "."));
-      const unit = m[3].toUpperCase();
-      const unitPrice  = parseNum(m[4]);
-      const totalPrice = parseNum(m[5]);
-      if (qty > 0 && totalPrice > 0) {
-        items.push({ code: "", description: desc.toUpperCase(), qty, unit, unitPrice, totalPrice });
-      }
-    }
 
-    const totalValMatch = t.match(/Valor\s+Total\b[:\s]*R?\$?\s*([\d.,]+)/i);
+    const parseItems = (section: string): any[] => {
+      const result: any[] = [];
+      const re = buildItemRe();
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(section)) !== null) {
+        const desc = m[1].trim();
+        if (desc.length < 2 || desc.length > 80) continue;
+        if (SKIP_DESC.test(desc)) continue;
+        const qty = parseFloat(m[2].replace(",", "."));
+        const unit = m[3].toUpperCase();
+        const unitPrice  = parseNum(m[4]);
+        const totalPrice = parseNum(m[5]);
+        if (qty > 0 && totalPrice > 0) {
+          result.push({ code: "", description: desc.toUpperCase(), qty, unit, unitPrice, totalPrice });
+        }
+      }
+      return result;
+    };
+
+    let items = sectionA ? parseItems(sectionA) : [];
+    if (items.length === 0 && sectionB) items = parseItems(sectionB);
+
+    // ── Totals ────────────────────────────────────────────────────────────────
+    const totalValMatch = t.match(/Valor\s+Total\b[:\s]*R?\$?\s*([\d.,]+)/i) ||
+                          t.match(/VALOR\s+PAGO\s*R\$\s*:?\s*([\d.,]+)/i);
     const discValMatch  = t.match(/(?:Valor\s+)?Desconto[:\s]*R?\$?\s*([\d.,]+)/i);
     const payMatch      = t.match(/(?:PIX(?:\s*[-–]\s*[\wÀ-ÿ]+)?|Pix\b|Cart[aã]o\s+de\s+(?:D[eé]bito|Cr[eé]dito)|Dinheiro|Transfer[eê]ncia|Boleto)/i);
 

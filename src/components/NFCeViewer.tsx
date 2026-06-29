@@ -56,14 +56,8 @@ const getSefazPortalUrl = (qrUrl?: string): string => {
   }
 };
 
-const NFCeLogoSvg = () => (
-  <svg viewBox="0 0 54 54" width="46" height="46" xmlns="http://www.w3.org/2000/svg">
-    <text x="2" y="20" fontSize="12" fontWeight="bold" fontFamily="Georgia,serif" fill="currentColor">nfc</text>
-    <text x="4" y="32" fontSize="11" fontFamily="Georgia,serif" fill="currentColor">e</text>
-    <path d="M 32 8 Q 48 27 32 46" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
-    <path d="M 36 14 Q 48 27 36 40" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-    <path d="M 40 19 Q 48 27 40 35" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-  </svg>
+const NFCeLogoImg = () => (
+  <img src="/nfce-logo.png" alt="NFC-e" style={{ height: 48, width: "auto" }} />
 );
 
 export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: NFCeViewerProps) {
@@ -397,7 +391,7 @@ export default function NFCeViewer({ data, onUpdateData, onBack, onOpenShare }: 
           ) : (
             <div className="flex items-start gap-2 mb-3">
               <div className="shrink-0 mt-0.5">
-                <NFCeLogoSvg />
+                <NFCeLogoImg />
               </div>
               <div className="flex-1 text-center">
                 {companyLogo && (
